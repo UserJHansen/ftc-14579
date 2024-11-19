@@ -1,28 +1,40 @@
 package org.firstinspires.ftc.teamcode.subsystems
 
 import com.acmerobotics.dashboard.config.Config
+import com.acmerobotics.dashboard.telemetry.TelemetryPacket
 import com.acmerobotics.roadrunner.InstantAction
 import com.acmerobotics.roadrunner.ParallelAction
 import com.acmerobotics.roadrunner.SequentialAction
 import com.acmerobotics.roadrunner.SleepAction
 import com.acmerobotics.roadrunner.ftc.DownsampledWriter
-import com.acmerobotics.roadrunner.ftc.FlightRecorder
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.hardware.HardwareMap
+import org.firstinspires.ftc.teamcode.ftclib.PIDFController
 import org.firstinspires.ftc.teamcode.galahlib.StateLoggable
 import org.firstinspires.ftc.teamcode.galahlib.actions.Loggable
 import org.firstinspires.ftc.teamcode.galahlib.actions.LoggableAction
 import org.firstinspires.ftc.teamcode.galahlib.actions.LoggingSequential
-import org.firstinspires.ftc.teamcode.galahlib.mechanisms.DigitalInput
-import org.firstinspires.ftc.teamcode.galahlib.mechanisms.Lift
+import org.firstinspires.ftc.teamcode.galahlib.mechanisms.CurrentCutoff
+import org.firstinspires.ftc.teamcode.galahlib.mechanisms.LinkedLift
 import org.firstinspires.ftc.teamcode.galahlib.mechanisms.ServoMultiState
 import org.firstinspires.ftc.teamcode.messages.StringMessage
 
 @Config
 class Outtake(hardwareMap: HardwareMap) : StateLoggable {
-    class Params {
+    companion object PARAMS {
         @JvmField
-        var P_Outake = 10.0
+        var PIDController = PIDFController(
+            10.0,
+            0.0,
+            0.0,
+            0.0
+        )
+
+        @JvmField
+        var SpecimenCurrentTrigger = 8.0
+
+        @JvmField
+        var resetCurrentCutoff = 5.0
 
         class LiftPositions {
             @JvmField
@@ -32,121 +44,84 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             var topSpecimen = 12.5
         }
 
-        class GrabberLimits {
+        class GrabberPositions {
             @JvmField
-            var waiting = 1.0
+            var waiting = 0.45
 
             @JvmField
-            var grabbing = 0.0
+            var close = 0.3
 
             @JvmField
-            var loose = 0.2
+            var grabbing = 0.22
         }
 
-        class ElbowLimits {
+        class PivotPositions {
             @JvmField
-            var intake = 0.49
+            var intake = 0.03
 
             @JvmField
-            var deposit = 1.0
+            var specimenCapture = 0.97
 
             @JvmField
-            var specimen = 0.57
+            var specimen = 0.47
 
             @JvmField
-            var specimenOtherSide = 0.235
-        }
-
-        class WristLimits {
-            @JvmField
-            var intake = 0.78
+            var deposit = 0.34
 
             @JvmField
-            var specimen = 0.48
-
-            @JvmField
-            var deposit = 0.4
-
-            @JvmField
-            var specimenOtherSide = 0.84
-
-            @JvmField
-            var specimenSecure = 0.9
+            var depositDown = 0.27
         }
 
         val liftPositions = LiftPositions()
-        val grabberLimits = GrabberLimits()
-        val elbowLimits = ElbowLimits()
-        val wristLimits = WristLimits()
+        val grabberPositions = GrabberPositions()
+        val pivotPositions = PivotPositions()
     }
 
-    companion object {
-        @JvmStatic
-        val PARAMS = Params()
-    }
-
-    val lift = Lift(hardwareMap, "outtakeSlides", DcMotorSimple.Direction.FORWARD, PARAMS.P_Outake)
-    val endLimit = DigitalInput(hardwareMap, "outtakeLimit")
+    val lift =
+        LinkedLift(hardwareMap, "slide1", "slide2", PIDController, DcMotorSimple.Direction.FORWARD)
 
     val grabber = ServoMultiState(
-        hardwareMap, "outtakeGrabber",
+        hardwareMap, "outtakeClaw",
         doubleArrayOf(
-            PARAMS.grabberLimits.waiting,
-            PARAMS.grabberLimits.grabbing,
-            PARAMS.grabberLimits.loose
+            grabberPositions.waiting,
+            grabberPositions.close,
+            grabberPositions.grabbing
         ), 0.4
     )
-    val elbow = ServoMultiState(
-        hardwareMap, "elbow",
+    val pivot = ServoMultiState(
+        hardwareMap, "outtakePivot",
         doubleArrayOf(
-            PARAMS.elbowLimits.intake,
-            PARAMS.elbowLimits.deposit,
-            PARAMS.elbowLimits.specimen,
-            PARAMS.elbowLimits.specimenOtherSide,
-        ), 0.578
-    )
-    val wrist = ServoMultiState(
-        hardwareMap, "wrist",
-        doubleArrayOf(
-            PARAMS.wristLimits.intake,
-            PARAMS.wristLimits.specimen,
-            PARAMS.wristLimits.deposit,
-            PARAMS.wristLimits.specimenOtherSide,
-            PARAMS.wristLimits.specimenSecure
+            pivotPositions.intake,
+            pivotPositions.specimenCapture,
+            pivotPositions.specimen,
+            pivotPositions.deposit,
+            pivotPositions.depositDown
         ), 1.17
     )
-
-    init {
-        FlightRecorder.write("OUTTAKE_PARAMS", PARAMS)
-    }
 
     private val outtakeActionWriter = DownsampledWriter("OUTTAKE_ACTION", 50_000_000)
 
     fun resetLifts(): LoggableAction {
         outtakeActionWriter.write(StringMessage("RESET_LIFTS"))
-        return lift.resetPosition(endLimit.until(false))
+        return lift.resetPosition(
+            CurrentCutoff(lift.firstLift).above(resetCurrentCutoff)
+        )
     }
 
-    fun readyForIntake(): LoggableAction {
+    fun homePosition(): LoggableAction {
         return Loggable(
             "MOVE_ARM_TRANSFER", SequentialAction(
                 InstantAction {
                     outtakeActionWriter.write(StringMessage("MOVE_ARM_TRANSFER"))
                 },
-                grabber.setPosition(0),
-                wrist.setPosition(0),
-                elbow.setPosition(0),
-                SleepAction(0.3)
+                grabber.setPosition(1),
+                pivot.setPosition(0),
             )
         )
     }
 
     fun pickupInternalSample(): LoggableAction {
-        return LoggingSequential(
-            "PICKUP_INTERNAL_SAMPLE",
-            Loggable("GRAB_SAMPLE", grabber.setPosition(1)),
-            Loggable("MOVE_OUT", elbow.setPosition(2)),
-        )
+        return Loggable("GRAB_SAMPLE", grabber.setPosition(2))
     }
 
     fun topBasket(): LoggableAction {
@@ -155,21 +130,30 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             Loggable("LOG_ACTION", InstantAction {
                 outtakeActionWriter.write(StringMessage("TOP_BASKET"))
             }),
-            lift.gotoDistance(PARAMS.liftPositions.topBasket, PARAMS.liftPositions.topBasket / 2),
-            Loggable(
-                "EXTEND_ARM_AND_GOTO_TOP",
-                ParallelAction(
-                    elbow.setPosition(1),
-                    wrist.setPosition(2),
+            lift.goToThroughWhile(
+                liftPositions.topBasket,
+                liftPositions.topBasket / 2,
+                Loggable(
+                    "PIVOT_OUTTAKE",
+                    pivot.setPosition(3)
                 )
             ),
+            Loggable(
+                "LOCK_IN",
+                pivot.setPosition(4)
+            )
         )
     }
 
     fun dropSample(): LoggableAction {
-        return Loggable("RELEASE_SAMPLE", ParallelAction(InstantAction {
-            outtakeActionWriter.write(StringMessage("DROP_SAMPLE"))
-        }, grabber.setPosition(0)))
+        return LoggingSequential(
+            "RELEASE_SAMPLE", Loggable("LOG", InstantAction {
+                outtakeActionWriter.write(StringMessage("DROP_SAMPLE"))
+            }),
+            Loggable("LET_GO", grabber.setPosition(0)),
+            Loggable("WAIT_FOR_DROP", SleepAction(0.5)),
+            Loggable("GET_OUT", pivot.setPosition(3))
+        )
     }
 
     fun retractArm(): LoggableAction = LoggingSequential(
@@ -177,16 +161,17 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
         Loggable("LOG", InstantAction {
             outtakeActionWriter.write(StringMessage("RETRACT"))
         }),
+
         Loggable(
             "MOVE_ARM_IN", ParallelAction(
-                elbow.setPosition(0),
-                wrist.setPosition(0)
+                grabber.setPosition(1),
+                pivot.setPosition(0)
             )
         ),
         lift.gotoDistance(0.0)
     )
 
-    fun specimenReady(): LoggableAction {
+    fun specimenReady(open: Boolean): LoggableAction {
         return LoggingSequential(
             "SPECIMEN_READY",
             Loggable("LOG_ACTION", InstantAction {
@@ -196,77 +181,96 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             Loggable(
                 "MOVE_ARM_OUT", ParallelAction(
                     grabber.setPosition(0),
-                    elbow.setPosition(2),
-                    wrist.setPosition(1)
+                    pivot.setPosition(1)
                 )
             ),
-            lift.gotoDistance(2.0),
+            lift.gotoDistance(0.0),
+            Loggable("MOVE_GRABBER_TO_POSITION", grabber.setPosition(if (open) 0 else 1))
         )
     }
 
-    fun retryGrabSpecimen(): LoggableAction {
+    fun grabber(open: Boolean): LoggableAction {
         return LoggingSequential(
-            "GRAB_SPECIMEN_RETRY",
+            "MOVE_GRABBER",
             Loggable("MOVE_GRABBER", ParallelAction(InstantAction {
-                outtakeActionWriter.write(StringMessage("GRAB_SPECIMEN_RETRY"))
-            }, grabber.setPosition(0))),
-            lift.gotoDistance(0.1),
-            Loggable("WAIT_FOR_REALIGN", SleepAction(1.0)),
+                outtakeActionWriter.write(StringMessage("MOVE_GRABBER"))
+            }, grabber.setPosition(if (open) 0 else 1))),
         )
     }
 
-    fun grabSpecimen(): LoggableAction {
+    fun raiseSpecimen(): LoggableAction {
         return LoggingSequential(
             "GRAB_SPECIMEN",
-            Loggable("GRAB_SPECIMEN", ParallelAction(InstantAction {
+            Loggable("GRAB_SPECIMEN", InstantAction {
                 outtakeActionWriter.write(StringMessage("GRAB_SPECIMEN"))
-            }, grabber.setPosition(1))),
-            lift.gotoDistance(
-                PARAMS.liftPositions.topSpecimen,
-                PARAMS.liftPositions.topSpecimen / 2
+            }),
+            lift.goToThroughWhile(
+                liftPositions.topSpecimen,
+                liftPositions.topSpecimen / 2,
+                Loggable(
+                    "MOVE_ARM_OUT", ParallelAction(
+                        pivot.setPosition(2),
+                        SleepAction(0.2),
+                    )
+                ),
             ),
-            Loggable("MOVE_ARM_OUT", ParallelAction(elbow.setPosition(3), wrist.setPosition(3))),
-            Loggable(
-                "GRAB_DROP", ParallelAction(
-                    grabber.setPosition(2),
-                    SleepAction(0.2),
-                )
-            ),
-            Loggable("GRAB", grabber.setPosition(1)),
         )
     }
 
     fun placeSpecimen(): LoggableAction {
         return LoggingSequential(
             "PLACE_SPECIMEN",
+            lift.gotoDistance(liftPositions.topSpecimen),
             Loggable("LOG_ACTION", InstantAction {
                 outtakeActionWriter.write(StringMessage("PLACE_SPECIMEN"))
-                lift.liftMotor.setPositionPIDFCoefficients(25.0)
+                lift.lockedOut = true
+                lift.forBothMotors { motor ->
+                    motor.power = 1.0
+                }
             }),
-            Loggable(
-                "GRAB", ParallelAction(
-                    grabber.setPosition(1),
-                    wrist.setPosition(4)
-                )
-            ),
-            lift.gotoDistance(PARAMS.liftPositions.topSpecimen + 6, 0.25),
-            Loggable("WAIT_FOR_FINAL", SleepAction(0.5)),
+            lift.gotoDistance(liftPositions.topSpecimen + 6, 0.25),
             Loggable(
                 "PID_NORMAL",
-                InstantAction { lift.liftMotor.setPositionPIDFCoefficients(PARAMS.P_Outake) }),
-            Loggable("LET_GO", grabber.setPosition(0)),
+                InstantAction {
+                    lift.lockedOut = false
+                    lift.forBothMotors { motor ->
+                        motor.power = 0.0
+                    }
+                }),
+        )
+    }
+
+    fun ensureSpecimenPlaced(): LoggableAction {
+        return object : LoggableAction {
+            override val name: String
+                get() = if (currentAction != null) currentAction!!.name else "SPECIMEN_PLACE"
+            var currentAction: LoggableAction? = null;
+            val currentTriggerAction = SequentialAction(
+                CurrentCutoff(lift.firstLift).above(SpecimenCurrentTrigger),
+                CurrentCutoff(lift.firstLift).below(SpecimenCurrentTrigger)
+            )
+
+            override fun run(p: TelemetryPacket): Boolean {
+                if (currentAction == null || !currentAction!!.run(p)) {
+                    currentAction = placeSpecimen()
+                }
+
+                return currentTriggerAction.run(p)
+            }
+
+        }
+    }
+
+    fun returnSpecimen(): LoggableAction {
+        return LoggingSequential(
+            "RETURN_SPECIMEN",
             Loggable(
-                "MOVE_SAFE", ParallelAction(
-                    elbow.setPosition(2),
-                    wrist.setPosition(0)
+                "LET_GO", ParallelAction(
+                    grabber.setPosition(0),
+                    pivot.setPosition(0)
                 )
             ),
             lift.gotoDistance(0.0),
-            Loggable(
-                "MOVE_ARM_IN", ParallelAction(
-                    elbow.setPosition(0),
-                )
-            ),
         )
     }
 
@@ -279,16 +283,11 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             lift.gotoDistance(4.0),
             Loggable(
                 "MOVE_SAFE", ParallelAction(
-                    elbow.setPosition(2),
-                    wrist.setPosition(0)
+                    grabber.setPosition(1),
+                    pivot.setPosition(0)
                 )
             ),
             lift.gotoDistance(0.0),
-            Loggable(
-                "MOVE_ARM_IN", ParallelAction(
-                    elbow.setPosition(0),
-                )
-            ),
         )
     }
 

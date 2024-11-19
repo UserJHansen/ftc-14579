@@ -16,4 +16,6 @@ public class PoseStorage {
     public static boolean splitControls = false;
 
     public static boolean shouldHallucinate = false;
+
+    public static Double slideHoldPosition = 0.0;
 }

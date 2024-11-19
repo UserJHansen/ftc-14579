@@ -42,8 +42,6 @@ import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
 import org.firstinspires.ftc.teamcode.galahlib.StateLoggable;
-import org.firstinspires.ftc.teamcode.localization.FuseLocation;
-import org.firstinspires.ftc.teamcode.localization.OTOSLocalizer;
 import org.firstinspires.ftc.teamcode.localization.RollbackLocalizer;
 import org.firstinspires.ftc.teamcode.localization.ThreeDeadWheelLocalizer;
 import org.firstinspires.ftc.teamcode.messages.DriveCommandMessage;
@@ -111,9 +109,7 @@ public final class MecanumDrive implements StateLoggable {
     public final VoltageSensor voltageSensor;
     public final LazyImu lazyImu;
     public final RollbackLocalizer localizer;
-    public final FuseLocation fusedLocation;
     public final ThreeDeadWheelLocalizer deadWheelLocalizer;
-    public final OTOSLocalizer otosLocalizer;
     private final DownsampledWriter targetPoseWriter = new DownsampledWriter("TARGET_POSE", 50_000_000);
     private final DownsampledWriter driveCommandWriter = new DownsampledWriter("DRIVE_COMMAND", 50_000_000);
     private final DownsampledWriter mecanumCommandWriter = new DownsampledWriter("MECANUM_COMMAND", 50_000_000);
@@ -126,10 +122,10 @@ public final class MecanumDrive implements StateLoggable {
 
         // TODO: make sure your config has motors with these names (or change them)
         //   see https://ftc-docs.firstinspires.org/en/latest/hardware_and_software_configuration/configuring/index.html
-        leftFront = hardwareMap.get(DcMotorEx.class, "leftFront");
-        leftBack = hardwareMap.get(DcMotorEx.class, "leftRear");
-        rightBack = hardwareMap.get(DcMotorEx.class, "rightRear");
-        rightFront = hardwareMap.get(DcMotorEx.class, "rightFront");
+        leftFront = hardwareMap.get(DcMotorEx.class, "2");
+        leftBack = hardwareMap.get(DcMotorEx.class, "1");
+        rightBack = hardwareMap.get(DcMotorEx.class, "3");
+        rightFront = hardwareMap.get(DcMotorEx.class, "0");
 
         leftFront.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         leftBack.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
@@ -138,10 +134,10 @@ public final class MecanumDrive implements StateLoggable {
 
         // TODO: reverse motor directions if needed
         //   leftFront.setDirection(DcMotorSimple.Direction.REVERSE);
-        leftFront.setDirection(DcMotorSimple.Direction.FORWARD);
-        leftBack.setDirection(DcMotorSimple.Direction.FORWARD);
-        rightFront.setDirection(DcMotorSimple.Direction.REVERSE);
-        rightBack.setDirection(DcMotorSimple.Direction.REVERSE);
+        leftFront.setDirection(DcMotorSimple.Direction.REVERSE);
+        leftBack.setDirection(DcMotorSimple.Direction.REVERSE);
+        rightFront.setDirection(DcMotorSimple.Direction.FORWARD);
+        rightBack.setDirection(DcMotorSimple.Direction.FORWARD);
 
         lazyImu = new LazyImu(hardwareMap, "imu", new RevHubOrientationOnRobot(
                 PARAMS.logoFacingDirection, PARAMS.usbFacingDirection));
@@ -149,9 +145,7 @@ public final class MecanumDrive implements StateLoggable {
         voltageSensor = hardwareMap.voltageSensor.iterator().next();
 
         deadWheelLocalizer = new ThreeDeadWheelLocalizer(hardwareMap, PARAMS.inPerTick);
-        otosLocalizer = new OTOSLocalizer(hardwareMap);
-        fusedLocation = new FuseLocation(otosLocalizer, deadWheelLocalizer);
-        localizer = new RollbackLocalizer(fusedLocation);
+        localizer = new RollbackLocalizer(deadWheelLocalizer);
         this.localizer.setCurrentPose(pose);
 
         FlightRecorder.write("MECANUM_PARAMS", PARAMS);
@@ -190,11 +184,6 @@ public final class MecanumDrive implements StateLoggable {
         localizer.drawPoseHistory(p.fieldOverlay());
 
         Canvas c = p.fieldOverlay();
-        c.setStroke("#B53FA8");
-        Drawing.drawRobot(c, fusedLocation.getOtosPose());
-
-        c.setStroke("#3F89B5");
-        Drawing.drawRobot(c, fusedLocation.getThreeWheelPose());
 
         p.put("x", localizer.currentPose.position.x);
         p.put("y", localizer.currentPose.position.y);

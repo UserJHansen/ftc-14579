@@ -62,15 +62,9 @@ public class ActionTester extends LinearOpMode {
 
             if (action == null || !action.run(p)) {
                 action = new SequentialAction(
-                        intake.captureSample(true, true),
-                        new race(intake.transfer(),
-                                new SleepAction(2)
-                        ),
-                        intake.stopTransfer()
+                        intake.captureSample(true),
+                        intake.transfer()
                 );
-//                action = new SequentialAction(
-//                    outtake.readyForTransfer()
-//                );
             }
 
             for (LynxModule module : allHubs) {

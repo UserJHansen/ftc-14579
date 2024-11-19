@@ -14,6 +14,7 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.hardware.HardwareMap
 import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit
 import org.firstinspires.ftc.robotcore.internal.system.Deadline
+import org.firstinspires.ftc.teamcode.ftclib.PIDFController
 import org.firstinspires.ftc.teamcode.galahlib.StateLoggable
 import org.firstinspires.ftc.teamcode.galahlib.actions.LoggableAction
 import org.firstinspires.ftc.teamcode.messages.BooleanMessage
@@ -26,11 +27,13 @@ import kotlin.math.abs
 import kotlin.math.max
 
 @Config
-class Lift @JvmOverloads constructor(
+class LinkedLift @JvmOverloads constructor(
     hardwareMap: HardwareMap,
-    name: String,
+    firstLiftName: String,
+    secondLiftName: String,
+    val pidfController: PIDFController,
     direction: DcMotorSimple.Direction = DcMotorSimple.Direction.FORWARD,
-    pValue: Double = 1.0,
+    invertSecond: Boolean = true,
     val ticksPerInch: Double = 47.7419354839,
 ) : StateLoggable {
     companion object {
@@ -39,26 +42,41 @@ class Lift @JvmOverloads constructor(
     }
 
     @JvmField
-    val liftMotor = hardwareMap.get(DcMotorEx::class.java, name)
+    val firstLift = hardwareMap.get(DcMotorEx::class.java, firstLiftName)
+
+    @JvmField
+    val secondLift = hardwareMap.get(DcMotorEx::class.java, secondLiftName)
 
     @JvmField
     var targetDistance: Double = 0.0
 
-    val currentPosition get() = liftMotor.currentPosition / ticksPerInch
+    val currentPosition get() = (firstLift.currentPosition + secondLift.currentPosition) / 2 / ticksPerInch
 
-    private fun initMotor() {
-        liftMotor.targetPosition = 0
-        liftMotor.mode = DcMotor.RunMode.RUN_TO_POSITION
-        liftMotor.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
-        liftMotor.power = 0.1
-        liftMotor.targetPositionTolerance = (tolerance * ticksPerInch).toInt()
+    private fun initMotor(motor: DcMotorEx) {
+        motor.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+        motor.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
+        motor.power = 0.0
+    }
+
+    fun interface MotorFunction {
+        fun run(motor: DcMotorEx)
+    }
+
+    fun forBothMotors(func: MotorFunction) {
+        for (motor in arrayOf(firstLift, secondLift)) {
+            func.run(motor)
+        }
     }
 
     init {
-        initMotor()
-        liftMotor.zeroPowerBehavior = DcMotor.ZeroPowerBehavior.BRAKE
-        liftMotor.setPositionPIDFCoefficients(pValue)
-        liftMotor.direction = direction
+        forBothMotors { motor ->
+            initMotor(motor)
+            motor.direction = direction
+        }
+
+        if (invertSecond) {
+            secondLift.direction = direction.inverted()
+        }
     }
 
     private val liftActionWriter = DownsampledWriter("LIFT_ACTION", 50_000_000)
@@ -72,7 +90,9 @@ class Lift @JvmOverloads constructor(
             val resetAction = SequentialAction(
                 resetCondition,
                 InstantAction {
-                    liftMotor.power = 0.0
+                    forBothMotors { motor ->
+                        motor.power = 0.0
+                    }
                 },
                 SleepAction(0.1)
             )
@@ -81,8 +101,9 @@ class Lift @JvmOverloads constructor(
 
             override fun run(p: TelemetryPacket): Boolean {
                 if (!initialized) {
-                    liftMotor.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
-                    liftMotor.power = -1.0
+                    forBothMotors { motor ->
+                        motor.power = -1.0
+                    }
                     endpointTimeout.reset()
                     initialized = true
                 }
@@ -95,9 +116,11 @@ class Lift @JvmOverloads constructor(
                     )
                     liftPoseWriter.write(DoubleMessage(0.0))
 
-                    liftMotor.power = 0.0
-                    liftMotor.mode = DcMotor.RunMode.RESET_ENCODERS
-                    initMotor()
+                    forBothMotors { motor ->
+                        motor.power = 0.0
+                        motor.mode = DcMotor.RunMode.RESET_ENCODERS
+                        initMotor(motor)
+                    }
 
                     // If there were any ignored goto distance calls make them happy now
                     // However does not wait for it
@@ -127,9 +150,6 @@ class Lift @JvmOverloads constructor(
                         (0.75 * abs(targetDistance - currentPosition)).toLong(),
                         TimeUnit.SECONDS
                     )
-                    liftMotor.targetPosition = (targetDistance * ticksPerInch).toInt()
-                    if (!lockedOut)
-                        liftMotor.mode = DcMotor.RunMode.RUN_TO_POSITION
 
                     initialized = true
                 }
@@ -137,44 +157,22 @@ class Lift @JvmOverloads constructor(
                 liftPoseWriter.write(DoubleMessage(currentPosition))
 
                 if (abs(currentPosition - targetDistance) > tolerance && timeout?.hasExpired() == false && !PoseStorage.shouldHallucinate) {
+                    if (!lockedOut)
+                        forBothMotors { motor ->
+                            val power = pidfController.calculate(motor.currentPosition.toDouble())
+                            motor.power = power
+                        }
+
                     return true
                 }
 
                 if (abs(targetDistance - 0.0) < Companion.tolerance && abs(targetDistance - currentPosition) < Companion.tolerance) {
 //                    Target is 0, and we're there, turn off the motor
-                    liftMotor.power = 0.0
-                    liftMotor.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+                    forBothMotors { motor ->
+                        motor.power = 0.0
+                    }
                 }
                 return false
-            }
-        }
-    }
-
-
-    fun interface DoubleProvider {
-        fun run(): Double
-    }
-
-    fun holdVariablePosition(positionProvider: DoubleProvider): LoggableAction {
-        return object : LoggableAction {
-            override val name: String
-                get() = "$lastName HOLD_USER_DISTANCE"
-            var initialized = false
-
-            override fun run(p: TelemetryPacket): Boolean {
-                if (!initialized) {
-                    liftActionWriter.write(StringMessage("$lastName HOLD_USER_DISTANCE"))
-                    liftMotor.mode = DcMotor.RunMode.RUN_TO_POSITION
-                    initialized = true
-                }
-
-                liftPoseWriter.write(DoubleMessage(currentPosition))
-
-                if (!lockedOut) {
-                    liftMotor.targetPosition = (positionProvider.run() * ticksPerInch).toInt()
-                }
-
-                return liftMotor.targetPosition != 0
             }
         }
     }
@@ -195,7 +193,6 @@ class Lift @JvmOverloads constructor(
 
             val gotoAction = gotoDistance(distance, tolerance)
             var throughCompleted = false
-            var toCompleted = false
 
             override fun run(p: TelemetryPacket): Boolean {
                 if (activateThrough && !throughCompleted) {
@@ -209,24 +206,24 @@ class Lift @JvmOverloads constructor(
 
     var lockedOut = true
     fun lockout() {
-        liftMotor.power = 0.0
-        liftMotor.mode = DcMotor.RunMode.RUN_WITHOUT_ENCODER
+        forBothMotors { motor ->
+            motor.power = 0.0
+        }
         lockedOut = true
     }
 
     fun unlock() {
-        if (abs(targetDistance - 0.0) > tolerance) {
-            liftMotor.power = 1.0
-            liftMotor.mode = DcMotor.RunMode.RUN_TO_POSITION
-        }
         lockedOut = false
     }
 
     var lastName = ""
     override fun logState(uniqueName: String) {
         lastName = uniqueName
-        Logging.DEBUG("$uniqueName LIFT_POSITION", liftMotor.currentPosition)
-        Logging.DEBUG("$uniqueName LIFT_TARGET", liftMotor.targetPosition)
-        Logging.DEBUG("$uniqueName LIFT_CURRENT", liftMotor.getCurrent(CurrentUnit.AMPS))
+        Logging.DEBUG("$uniqueName [FIRST] LIFT_POSITION", firstLift.currentPosition)
+        Logging.DEBUG("$uniqueName [FIRST] LIFT_POWER", firstLift.power)
+        Logging.DEBUG("$uniqueName [FIRST] LIFT_CURRENT", firstLift.getCurrent(CurrentUnit.AMPS))
+        Logging.DEBUG("$uniqueName [SECOND] LIFT_POSITION", secondLift.currentPosition)
+        Logging.DEBUG("$uniqueName [SECOND] LIFT_POWER", secondLift.power)
+        Logging.DEBUG("$uniqueName [SECOND] LIFT_CURRENT", secondLift.getCurrent(CurrentUnit.AMPS))
     }
 }
