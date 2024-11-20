@@ -199,10 +199,17 @@ public class TeleOpFieldCentric extends LinearOpMode {
 
             if (specimenReady.update((PoseStorage.splitControls ? gamepad2 : gamepad1).b)
                     && sampleAction == null
-                    && (sampleState == SampleState.Waiting || sampleState == SampleState.Captured)) {
+                    && (sampleState == SampleState.Waiting || sampleState == SampleState.Captured || sampleState == SampleState.SpecimenWait)) {
                 if (finishState == FinishingState.Outtake) {
                     finishState = FinishingState.None;
                     finishingAction = null;
+                }
+
+                if (sampleState == SampleState.SpecimenWait) {
+                    // Cancel specimen
+                    sampleState = SampleState.Waiting;
+                    finishingAction = outtake.abortSpecimen();
+                    finishState = FinishingState.Outtake;
                 }
 
                 specimenGrabbed = sampleState == SampleState.Captured;
@@ -215,7 +222,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                 sampleAction = outtake.grabber(!specimenGrabbed);
             }
 
-            if ((PoseStorage.splitControls ? gamepad2 : gamepad1).a) {
+            if ((PoseStorage.splitControls ? gamepad2 : gamepad1).a && sampleState == SampleState.Waiting) {
                 if (finishState == FinishingState.Intake) {
                     finishState = FinishingState.None;
                     finishingAction = null;

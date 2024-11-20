@@ -180,12 +180,12 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             lift.gotoDistance(4.0),
             Loggable(
                 "MOVE_ARM_OUT", ParallelAction(
-                    grabber.setPosition(0),
+                    grabber.setPosition(2),
                     pivot.setPosition(1)
                 )
             ),
             lift.gotoDistance(0.0),
-            Loggable("MOVE_GRABBER_TO_POSITION", grabber.setPosition(if (open) 0 else 1))
+            Loggable("MOVE_GRABBER_TO_POSITION", grabber.setPosition(if (open) 0 else 2))
         )
     }
 
@@ -194,7 +194,7 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             "MOVE_GRABBER",
             Loggable("MOVE_GRABBER", ParallelAction(InstantAction {
                 outtakeActionWriter.write(StringMessage("MOVE_GRABBER"))
-            }, grabber.setPosition(if (open) 0 else 1))),
+            }, grabber.setPosition(if (open) 0 else 2))),
         )
     }
 
