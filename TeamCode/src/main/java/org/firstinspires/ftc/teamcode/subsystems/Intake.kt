@@ -4,6 +4,7 @@ import com.acmerobotics.dashboard.config.Config
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket
 import com.acmerobotics.roadrunner.ParallelAction
 import com.acmerobotics.roadrunner.SleepAction
+import com.qualcomm.hardware.rev.RevBlinkinLedDriver
 import com.qualcomm.hardware.rev.RevColorSensorV3
 import com.qualcomm.robotcore.hardware.DcMotorSimple
 import com.qualcomm.robotcore.hardware.HardwareMap
@@ -151,11 +152,18 @@ class Intake(hardwareMap: HardwareMap) : StateLoggable {
                     pullServo.servo.power = 1.0
                 } else if (currentSample == allianceColor || (shared && currentSample == SampleType.Shared) && intakeTouch.triggered) { // Good Sample caught
                     pullServo.servo.power = 0.0
+                    StaticLights.colors[1] = when (currentSample) {
+                        SampleType.Red -> RevBlinkinLedDriver.BlinkinPattern.RED
+                        SampleType.Blue -> RevBlinkinLedDriver.BlinkinPattern.BLUE
+                        SampleType.Shared -> RevBlinkinLedDriver.BlinkinPattern.YELLOW
+                        else -> RevBlinkinLedDriver.BlinkinPattern.BLACK
+                    }
                     if (captureTimeout == null)
                         captureTimeout = Deadline(PARAMS.captureTimeout, TimeUnit.MILLISECONDS)
                 } else { // Bad Sample
                     captureTimeout = null
                     pullServo.servo.power = -1.0
+                    StaticLights.colors[1] = RevBlinkinLedDriver.BlinkinPattern.BLACK
                 }
 
                 if (captureTimeout?.hasExpired() == true || PoseStorage.shouldHallucinate) {
@@ -192,6 +200,10 @@ class Intake(hardwareMap: HardwareMap) : StateLoggable {
         if (positionProvider?.run() == null) return LoggingSequential(
             "CAPTURE_CLOSE_SAMPLE",
 
+            StaticLights.setColours(arrayOf(
+                RevBlinkinLedDriver.BlinkinPattern.WHITE,
+                RevBlinkinLedDriver.BlinkinPattern.BLACK,
+            )),
             Loggable(
                 "SEARCH_AND_FLIP", ParallelAction(
                     Loggable("FLIP_INTAKE_DOWN", flipServo.setPosition(true)),
@@ -208,6 +220,10 @@ class Intake(hardwareMap: HardwareMap) : StateLoggable {
 
         return LoggingSequential(
             "CAPTURE_FAR_SAMPLE",
+            StaticLights.setColours(arrayOf(
+                RevBlinkinLedDriver.BlinkinPattern.WHITE,
+                RevBlinkinLedDriver.BlinkinPattern.BLACK,
+            )),
             Loggable(
                 "SEARCH_AND_FIND", ParallelAction(
                     race(

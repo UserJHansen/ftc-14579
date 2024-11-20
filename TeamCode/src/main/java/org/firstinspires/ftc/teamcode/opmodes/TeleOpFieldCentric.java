@@ -10,12 +10,13 @@ import com.acmerobotics.roadrunner.Action;
 import com.acmerobotics.roadrunner.ParallelAction;
 import com.acmerobotics.roadrunner.Pose2d;
 import com.acmerobotics.roadrunner.PoseVelocity2d;
-import com.acmerobotics.roadrunner.SequentialAction;
 import com.acmerobotics.roadrunner.Vector2d;
 import com.qualcomm.hardware.lynx.LynxModule;
+import com.qualcomm.hardware.rev.RevBlinkinLedDriver;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.robotcore.internal.system.Deadline;
 import org.firstinspires.ftc.teamcode.MecanumDrive;
 import org.firstinspires.ftc.teamcode.galahlib.Button;
 import org.firstinspires.ftc.teamcode.galahlib.actions.LoggableAction;
@@ -25,8 +26,11 @@ import org.firstinspires.ftc.teamcode.staticData.Logging;
 import org.firstinspires.ftc.teamcode.staticData.PoseStorage;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.Outtake;
+import org.firstinspires.ftc.teamcode.subsystems.SampleType;
+import org.firstinspires.ftc.teamcode.subsystems.StaticLights;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 @TeleOp(group = "advanced", name = "Teleop")
 @Config
@@ -42,6 +46,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
         VisionDetection visionDetection = new VisionDetection(hardwareMap);
         Intake intake = new Intake(hardwareMap);
         Outtake outtake = new Outtake(hardwareMap);
+        StaticLights.setup(hardwareMap, "blinkin");
 
         Button fieldMode = new Button();
         Button slowMode = new Button();
@@ -65,6 +70,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                 FtcDashboard.getInstance().sendTelemetryPacket(p);
                 p = new TelemetryPacket();
                 Logging.update();
+                StaticLights.update();
             }
         }
 
@@ -77,6 +83,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
             driveBase.update(p);
             visionDetection.update(driveBase.localizer, p);
             Logging.update();
+            StaticLights.update();
             FtcDashboard.getInstance().sendTelemetryPacket(p);
 
             if (gamepad2.back) {
@@ -103,7 +110,24 @@ public class TeleOpFieldCentric extends LinearOpMode {
         intake.unlock();
         outtake.unlock();
 
+        if (intake.getColorTriggered()) {
+            sampleState = SampleState.Captured;
+            StaticLights.setColors(new RevBlinkinLedDriver.BlinkinPattern[]{
+                    intake.getSampleType() == SampleType.Blue ?
+                            RevBlinkinLedDriver.BlinkinPattern.BLUE :
+                            intake.getSampleType() == SampleType.Red ?
+                                    RevBlinkinLedDriver.BlinkinPattern.RED :
+                                    RevBlinkinLedDriver.BlinkinPattern.YELLOW
+            });
+            sampleAction = new LoggingSequential("TRANSFER",
+                    intake.retractSlides(),
+                    intake.transfer(),
+                    outtake.pickupInternalSample()
+            );
+        }
+
         PoseStorage.isInit = false;
+        Deadline matchTimer = new Deadline(2, TimeUnit.MINUTES);
         while (opModeIsActive() && !isStopRequested()) {
             p = new TelemetryPacket();
 
@@ -119,6 +143,16 @@ public class TeleOpFieldCentric extends LinearOpMode {
             );
 
             PoseStorage.shouldHallucinate = (PoseStorage.splitControls ? gamepad2 : gamepad1).guide;
+            if (PoseStorage.shouldHallucinate) {
+                StaticLights.specialState(
+                        new RevBlinkinLedDriver.BlinkinPattern[]{
+                                RevBlinkinLedDriver.BlinkinPattern.RED,
+                                RevBlinkinLedDriver.BlinkinPattern.YELLOW
+                        },
+                        8
+                );
+            }
+
             if (PoseStorage.splitControls) {
                 slowMode.update(gamepad1.left_bumper);
                 fieldMode.update(gamepad1.x);
@@ -175,6 +209,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                             break;
 
                         case Waiting:
+                            StaticLights.getColors()[0] = StaticLights.getColors()[1];
                             sampleState = SampleState.Captured;
                             sampleAction = new LoggingSequential("TRANSFER",
                                     intake.retractSlides(),
@@ -207,7 +242,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
 
                 if (sampleState == SampleState.SpecimenWait) {
                     // Cancel specimen
-                    sampleState = SampleState.Waiting;
+                    sampleState = specimenGrabbed ? SampleState.Captured : SampleState.Waiting; // It's probably actually a sample if we cancel here
                     finishingAction = outtake.abortSpecimen();
                     finishState = FinishingState.Outtake;
                 }
@@ -292,6 +327,22 @@ public class TeleOpFieldCentric extends LinearOpMode {
                 }
             }
 
+            if (matchTimer.timeRemaining(TimeUnit.SECONDS) < 30 && matchTimer.timeRemaining(TimeUnit.SECONDS) > 28) {
+                StaticLights.specialState(
+                        new RevBlinkinLedDriver.BlinkinPattern[]{
+                                RevBlinkinLedDriver.BlinkinPattern.HOT_PINK,
+                                RevBlinkinLedDriver.BlinkinPattern.WHITE
+                        },
+                        8
+                );
+            }
+            if (matchTimer.timeRemaining(TimeUnit.SECONDS) < 2) {
+                StaticLights.specialState(
+                        new RevBlinkinLedDriver.BlinkinPattern[]{RevBlinkinLedDriver.BlinkinPattern.GREEN},
+                        1
+                );
+            }
+
             Logging.LOG("CURRENT_TEAM", PoseStorage.isRedAlliance ? "RED" : "BLUE");
             Logging.LOG("SPLIT", PoseStorage.splitControls);
             Logging.LOG("FIELD_MODE", fieldMode.val);
@@ -305,6 +356,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
             intake.logState("[TELEOP]");
             outtake.logState("[TELEOP]");
             Logging.update();
+            StaticLights.update();
             FtcDashboard.getInstance().sendTelemetryPacket(p);
         }
     }
