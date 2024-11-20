@@ -81,6 +81,8 @@ public class TeleOpFieldCentric extends LinearOpMode {
 
             if (gamepad2.back) {
                 PoseStorage.splitControls = true;
+            } else if (gamepad1.back) {
+                PoseStorage.splitControls = false;
             }
         }
 
@@ -107,6 +109,8 @@ public class TeleOpFieldCentric extends LinearOpMode {
 
             if (gamepad2.back) {
                 PoseStorage.splitControls = true;
+            } else if (gamepad1.back) {
+                PoseStorage.splitControls = false;
             }
 
             Vector2d input = new Vector2d(
@@ -125,7 +129,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     PoseStorage.isRedAlliance = false;
                 }
             } else {
-                slowMode.update(gamepad1.b);
+                slowMode.update(gamepad1.y);
                 fieldMode.update(gamepad1.x);
 
                 if (gamepad1.dpad_right) {
@@ -164,18 +168,26 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     Logging.LOG("SAMPLE_ACTION_FINISHED");
                     sampleAction = null;
 
-                    if (sampleState == SampleState.Outtaking) {
-                        finishState = FinishingState.Outtake;
-                        finishingAction = outtake.retractArm();
-                    }
+                    switch (sampleState) {
+                        case Outtaking:
+                            finishState = FinishingState.Outtake;
+                            finishingAction = outtake.retractArm();
+                            break;
 
-                    if (sampleState == SampleState.Waiting) {
-                        sampleState = SampleState.Captured;
-                        finishingAction = new LoggingSequential("TRANSFER",
-                                intake.retractSlides(),
-                                intake.transfer(),
-                                outtake.pickupInternalSample()
-                        );
+                        case Waiting:
+                            sampleState = SampleState.Captured;
+                            sampleAction = new LoggingSequential("TRANSFER",
+                                    intake.retractSlides(),
+                                    intake.transfer(),
+                                    outtake.pickupInternalSample()
+                            );
+                            break;
+
+                        case SpecimenIntake:
+                            sampleState = SampleState.Waiting;
+                            finishState = FinishingState.Outtake;
+                            finishingAction = outtake.returnSpecimen();
+                            break;
                     }
                 }
             }
@@ -221,7 +233,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
 
             float specificTrigger = (PoseStorage.splitControls ? gamepad2 : gamepad1).left_trigger;
             float sharedTrigger = (PoseStorage.splitControls ? gamepad2 : gamepad1).right_trigger;
-            if (specificTrigger > TriggerMin || sharedTrigger > TriggerMin) {
+            if (specificTrigger > TriggerMin || sharedTrigger > TriggerMin && sampleState == SampleState.Waiting) {
                 if (finishState == FinishingState.Intake) {
                     finishState = FinishingState.None;
                     finishingAction = null;
@@ -236,20 +248,8 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     captureState = CapturingState.Far;
                 }
             } else if (captureState == CapturingState.Far) {
-                finishState = FinishingState.Intake;
-                finishingAction = intake.retractSlides();
-            }
-
-            if ((PoseStorage.splitControls ? gamepad2 : gamepad1).a) {
-                if (finishState == FinishingState.Intake) {
-                    finishState = FinishingState.None;
-                    finishingAction = null;
-                }
-
-                Logging.LOG("Running close capture sequence");
-                sampleAction = intake.captureSample(true);
-                captureState = CapturingState.Close;
-            } else if (captureState == CapturingState.Close) {
+                sampleAction = null;
+                captureState = CapturingState.None;
                 finishState = FinishingState.Intake;
                 finishingAction = intake.retractSlides();
             }
@@ -259,6 +259,15 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     case Captured:
                         sampleAction = outtake.topBasket();
                         sampleState = SampleState.Outtaking;
+                        break;
+                    case Outtaking:
+                        sampleAction = outtake.dropSample();
+                        sampleState = SampleState.Clearing;
+                        break;
+                    case Clearing:
+                        finishingAction = outtake.homePosition();
+                        finishState = FinishingState.Outtake;
+                        sampleState = SampleState.Waiting;
                         break;
                     case SpecimenWait:
                         if (specimenGrabbed) {
@@ -297,6 +306,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
         Waiting,
         Captured,
         Outtaking,
+        Clearing,
 
         SpecimenWait,
         SpecimenIntake,
