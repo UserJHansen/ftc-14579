@@ -252,17 +252,24 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             override val name: String
                 get() = if (currentAction != null) currentAction!!.name else "SPECIMEN_PLACE"
             var currentAction: LoggableAction? = null;
+            var currentTriggered = false
             val currentTriggerAction = SequentialAction(
                 CurrentCutoff(lift.firstLift).above(SpecimenCurrentTrigger),
                 CurrentCutoff(lift.firstLift).below(SpecimenCurrentTrigger)
             )
 
             override fun run(p: TelemetryPacket): Boolean {
+                var complete = false
                 if (currentAction == null || !currentAction!!.run(p)) {
                     currentAction = placeSpecimen()
+                    complete = true
                 }
 
-                return currentTriggerAction.run(p)
+                if (!currentTriggered) {
+                    currentTriggered = !currentTriggerAction.run(p)
+                }
+
+                return !currentTriggered || !complete
             }
 
         }
@@ -277,6 +284,11 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
                     pivot.setPosition(0)
                 )
             ),
+            Loggable(
+                "UNLOCK_FROM_SPECIMEN",
+                InstantAction {
+                    lift.lockedOut = false
+                }),
             lift.gotoDistance(0.0),
             StaticLights.setColours(
                 arrayOf(
@@ -292,6 +304,11 @@ class Outtake(hardwareMap: HardwareMap) : StateLoggable {
             Loggable("LOG_ACTION", InstantAction {
                 outtakeActionWriter.write(StringMessage("ABORT_SPECIMEN"))
             }),
+            Loggable(
+                "UNLOCK_FROM_SPECIMEN",
+                InstantAction {
+                    lift.lockedOut = false
+                }),
             lift.gotoDistance(4.0),
             Loggable(
                 "MOVE_SAFE", ParallelAction(

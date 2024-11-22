@@ -247,11 +247,11 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     sampleState = specimenGrabbed ? SampleState.Captured : SampleState.Waiting; // It's probably actually a sample if we cancel here
                     finishingAction = outtake.abortSpecimen();
                     finishState = FinishingState.Outtake;
+                } else {
+                    specimenGrabbed = sampleState == SampleState.Captured;
+                    sampleAction = outtake.specimenReady(!specimenGrabbed);
+                    sampleState = SampleState.SpecimenWait;
                 }
-
-                specimenGrabbed = sampleState == SampleState.Captured;
-                sampleAction = outtake.specimenReady(!specimenGrabbed);
-                sampleState = SampleState.SpecimenWait;
             }
 
             if (sampleState == SampleState.SpecimenWait && progressSpecimen.update((PoseStorage.splitControls ? gamepad2 : gamepad1).left_bumper)) {
@@ -317,7 +317,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                         break;
                     case SpecimenWait:
                         if (specimenGrabbed) {
-                            sampleAction = new LoggingSequential(
+                            finishingAction = new LoggingSequential(
                                     "DEPLOY_SPECIMEN",
                                     outtake.raiseSpecimen(),
                                     outtake.ensureSpecimenPlaced()
@@ -326,8 +326,12 @@ public class TeleOpFieldCentric extends LinearOpMode {
                         } else {
                             finishingAction = outtake.abortSpecimen();
                             finishState = FinishingState.Outtake;
+                            sampleState = SampleState.Waiting;
                         }
                         break;
+                    case SpecimenIntake:
+                        finishingAction = null;
+                        sampleAction = outtake.ensureSpecimenPlaced();
                 }
             }
 
