@@ -196,7 +196,10 @@ class Intake(hardwareMap: HardwareMap) : StateLoggable {
     }
 
     @JvmOverloads
-    fun captureSample(shared: Boolean, positionProvider: Lift.DoubleProvider? = null): LoggableAction {
+    fun captureSample(
+        shared: Boolean,
+        positionProvider: Lift.DoubleProvider? = null
+    ): LoggableAction {
         if (positionProvider?.run() == null) return LoggingSequential(
             "CAPTURE_CLOSE_SAMPLE",
 
@@ -211,7 +214,6 @@ class Intake(hardwareMap: HardwareMap) : StateLoggable {
                     pickSampleForward(shared),
                 )
             ),
-            retractSlides(),
         )
 
         val holdPositionAction = slides.holdVariablePosition(positionProvider)

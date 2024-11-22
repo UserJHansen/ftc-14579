@@ -101,11 +101,11 @@ public class TeleOpFieldCentric extends LinearOpMode {
         }
 
         LoggableAction sampleAction = null;
-        LoggableAction finishingAction = null;
+        LoggableAction finishingAction = outtake.homePosition();
         boolean specimenGrabbed = false;
         SampleState sampleState = SampleState.Waiting;
         CapturingState captureState = CapturingState.None;
-        FinishingState finishState = FinishingState.None;
+        FinishingState finishState = FinishingState.Outtake;
 
         intake.unlock();
         outtake.unlock();
@@ -203,14 +203,10 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     sampleAction = null;
 
                     switch (sampleState) {
-                        case Outtaking:
-                            finishState = FinishingState.Outtake;
-                            finishingAction = outtake.retractArm();
-                            break;
-
                         case Waiting:
                             StaticLights.getColors()[0] = StaticLights.getColors()[1];
                             sampleState = SampleState.Captured;
+                            captureState = CapturingState.None;
                             sampleAction = new LoggingSequential("TRANSFER",
                                     intake.retractSlides(),
                                     intake.transfer(),
@@ -227,9 +223,15 @@ public class TeleOpFieldCentric extends LinearOpMode {
                 }
             }
 
-            if (finishingAction != null && !finishingAction.run(p)) {
-                finishState = FinishingState.None;
-                finishingAction = null;
+            Logging.LOG("FINISH_STATE", finishState);
+            if (finishingAction != null) {
+                Logging.DEBUG("FINISH_ACTION", finishingAction.getName());
+
+                if (!finishingAction.run(p)) {
+                    Logging.LOG("FINISH_ACTION_FINISHED");
+                    finishingAction = null;
+                    finishState = FinishingState.None;
+                }
             }
 
             if (specimenReady.update((PoseStorage.splitControls ? gamepad2 : gamepad1).b)
@@ -269,13 +271,15 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     captureState = CapturingState.Close;
                 }
             } else if (captureState == CapturingState.Close) {
+                sampleAction = null;
+                captureState = CapturingState.None;
                 finishState = FinishingState.Intake;
                 finishingAction = intake.retractSlides();
             }
 
             float specificTrigger = (PoseStorage.splitControls ? gamepad2 : gamepad1).left_trigger;
             float sharedTrigger = (PoseStorage.splitControls ? gamepad2 : gamepad1).right_trigger;
-            if (specificTrigger > TriggerMin || sharedTrigger > TriggerMin && sampleState == SampleState.Waiting) {
+            if ((specificTrigger > TriggerMin || sharedTrigger > TriggerMin) && sampleState == SampleState.Waiting) {
                 if (finishState == FinishingState.Intake) {
                     finishState = FinishingState.None;
                     finishingAction = null;
@@ -286,7 +290,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                     boolean shared = sharedTrigger > TriggerMin;
                     sampleAction = intake.captureSample(
                             shared,
-                            () -> Intake.minExtension + ((shared ? sharedTrigger : specificTrigger) * (Intake.maxExtension - Intake.minExtension)));
+                            () -> Intake.minExtension + ((shared ? (PoseStorage.splitControls ? gamepad2 : gamepad1).right_trigger : (PoseStorage.splitControls ? gamepad2 : gamepad1).left_trigger) * (Intake.maxExtension - Intake.minExtension)));
                     captureState = CapturingState.Far;
                 }
             } else if (captureState == CapturingState.Far) {
@@ -343,6 +347,7 @@ public class TeleOpFieldCentric extends LinearOpMode {
                 );
             }
 
+            Logging.LOG("CAPTURE_STATE", captureState);
             Logging.LOG("CURRENT_TEAM", PoseStorage.isRedAlliance ? "RED" : "BLUE");
             Logging.LOG("SPLIT", PoseStorage.splitControls);
             Logging.LOG("FIELD_MODE", fieldMode.val);
